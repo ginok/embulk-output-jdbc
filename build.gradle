@@ -180,7 +180,7 @@ Gem::Specification.new do |spec|
   spec.licenses      = ["Apache 2.0"]
   spec.homepage      = "https://github.com/embulk/embulk-output-jdbc"
 
-  spec.files         = `git ls-files`.split("\n") + Dir["classpath/*.jar"] + Dir["default_jdbc_driver/*.jar"]
+  spec.files         = `git ls-files`.split("\n") + Dir["lib/**/*.rb"] + Dir["src/**/*.java"] + Dir["classpath/*.jar"] + Dir["default_jdbc_driver/*.jar"]
   spec.test_files    = spec.files.grep(%r"^(test|spec)/")
   spec.require_paths = ["lib"]
 end

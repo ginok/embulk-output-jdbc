@@ -755,6 +755,8 @@ public abstract class AbstractJdbcOutputPlugin
             public JdbcColumn apply(JdbcColumn c)
             {
                 JdbcColumnOption option = columnOptionOf(columnOptions, c.getName());
+                Logger logger = Exec.getLogger(getClass());
+                logger.info("hogehoge: " + option.getSql());
                 if (option.getType().isPresent()) {
                     return JdbcColumn.newTypeDeclaredColumn(
                             c.getName(), Types.OTHER,  // sqlType, isNotNull, and isUniqueKey are ignored

@@ -26,4 +26,8 @@ public interface JdbcColumnOption
     @Config("timezone")
     @ConfigDefault("null")
     public Optional<DateTimeZone> getTimeZone();
+
+    @Config("sql")
+    @ConfigDefault("\"?\"")
+    public String getSql();
 }
