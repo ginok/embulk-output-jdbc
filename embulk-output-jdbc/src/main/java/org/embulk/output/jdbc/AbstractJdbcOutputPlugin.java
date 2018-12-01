@@ -34,6 +34,7 @@ import com.google.common.base.Supplier;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
 import org.embulk.config.Config;
@@ -542,14 +543,15 @@ public abstract class AbstractJdbcOutputPlugin
         Optional<JdbcSchema> initialTargetTableSchema =
             mode.ignoreTargetTableSchema() ?
                 Optional.<JdbcSchema>absent() :
-                newJdbcSchemaFromTableIfExists(con, task.getActualTable());
+                newJdbcSchemaFromTableIfExists(con, task.getActualTable(), task.getColumnOptions());
 
         // TODO get CREATE TABLE statement from task if set
+        final Map<String, JdbcColumnOption> columnOptions = task.getColumnOptions();
         JdbcSchema newTableSchema = applyColumnOptionsToNewTableSchema(
                 initialTargetTableSchema.or(new Supplier<JdbcSchema>() {
                     public JdbcSchema get()
                     {
-                        return newJdbcSchemaForNewTable(schema);
+                        return newJdbcSchemaForNewTable(schema, columnOptions);
                     }
                 }),
                 task.getColumnOptions());
@@ -573,16 +575,16 @@ public abstract class AbstractJdbcOutputPlugin
             task.setNewTableSchema(Optional.<JdbcSchema>absent());
         } else if (task.getIntermediateTables().isPresent() && !task.getIntermediateTables().get().isEmpty()) {
             TableIdentifier firstItermTable = task.getIntermediateTables().get().get(0);
-            targetTableSchema = newJdbcSchemaFromTableIfExists(con, firstItermTable).get();
+            targetTableSchema = newJdbcSchemaFromTableIfExists(con, firstItermTable, task.getColumnOptions()).get();
             task.setNewTableSchema(Optional.of(newTableSchema));
         } else {
             // also create the target table if not exists
             // CREATE TABLE IF NOT EXISTS xyz
             con.createTableIfNotExists(task.getActualTable(), newTableSchema, task.getCreateTableConstraint(), task.getCreateTableOption());
-            targetTableSchema = newJdbcSchemaFromTableIfExists(con, task.getActualTable()).get();
+            targetTableSchema = newJdbcSchemaFromTableIfExists(con, task.getActualTable(), task.getColumnOptions()).get();
             task.setNewTableSchema(Optional.<JdbcSchema>absent());
         }
-        task.setTargetTableSchema(matchSchemaByColumnNames(schema, targetTableSchema));
+        task.setTargetTableSchema(matchSchemaByColumnNames(schema, targetTableSchema, task.getColumnOptions()));
 
         // validate column_options
         newColumnSetters(
@@ -755,8 +757,6 @@ public abstract class AbstractJdbcOutputPlugin
             public JdbcColumn apply(JdbcColumn c)
             {
                 JdbcColumnOption option = columnOptionOf(columnOptions, c.getName());
-                Logger logger = Exec.getLogger(getClass());
-                logger.info("hogehoge: " + option.getSql());
                 if (option.getType().isPresent()) {
                     return JdbcColumn.newTypeDeclaredColumn(
                             c.getName(), Types.OTHER,  // sqlType, isNotNull, and isUniqueKey are ignored
@@ -764,7 +764,7 @@ public abstract class AbstractJdbcOutputPlugin
                 }
                 return c;
             }
-        }));
+        }), columnOptions);
     }
 
     protected static List<ColumnSetter> newColumnSetters(ColumnSetterFactory factory,
@@ -785,7 +785,7 @@ public abstract class AbstractJdbcOutputPlugin
         return builder.build();
     }
 
-    private static JdbcColumnOption columnOptionOf(Map<String, JdbcColumnOption> columnOptions, String columnName)
+    protected static JdbcColumnOption columnOptionOf(Map<String, JdbcColumnOption> columnOptions, String columnName)
     {
         return Optional.fromNullable(columnOptions.get(columnName)).or(
                     // default column option
@@ -807,7 +807,7 @@ public abstract class AbstractJdbcOutputPlugin
     protected void doCommit(JdbcOutputConnection con, PluginTask task, int taskCount)
         throws SQLException
     {
-        JdbcSchema schema = filterSkipColumns(task.getTargetTableSchema());
+        JdbcSchema schema = filterSkipColumns(task.getTargetTableSchema(), task.getColumnOptions());
 
         switch (task.getMode()) {
         case INSERT_DIRECT:
@@ -864,9 +864,10 @@ public abstract class AbstractJdbcOutputPlugin
         }
     }
 
-    protected JdbcSchema newJdbcSchemaForNewTable(Schema schema)
+    protected JdbcSchema newJdbcSchemaForNewTable(Schema schema, final Map<String, JdbcColumnOption> options)
     {
         final ImmutableList.Builder<JdbcColumn> columns = ImmutableList.builder();
+        final ImmutableMap.Builder<String, JdbcColumnOption> options_builder = ImmutableMap.builder();
         for (Column c : schema.getColumns()) {
             final String columnName = c.getName();
             c.visit(new ColumnVisitor() {
@@ -875,6 +876,7 @@ public abstract class AbstractJdbcOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.BOOLEAN, "BOOLEAN",
                             1, 0, false, false));
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
 
                 public void longColumn(Column column)
@@ -882,6 +884,7 @@ public abstract class AbstractJdbcOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.BIGINT, "BIGINT",
                             22, 0, false, false));
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
 
                 public void doubleColumn(Column column)
@@ -889,6 +892,7 @@ public abstract class AbstractJdbcOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.FLOAT, "DOUBLE PRECISION",
                             24, 0, false, false));
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
 
                 public void stringColumn(Column column)
@@ -896,6 +900,7 @@ public abstract class AbstractJdbcOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.CLOB, "CLOB",
                             4000, 0, false, false));  // TODO size type param
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
 
                 public void jsonColumn(Column column)
@@ -903,6 +908,7 @@ public abstract class AbstractJdbcOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.CLOB, "CLOB",
                             4000, 0, false, false));  // TODO size type param
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
 
                 public void timestampColumn(Column column)
@@ -910,14 +916,15 @@ public abstract class AbstractJdbcOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.TIMESTAMP, "TIMESTAMP",
                             26, 0, false, false));  // size type param is from postgresql
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
             });
         }
-        return new JdbcSchema(columns.build());
+        return new JdbcSchema(columns.build(), options_builder.build());
     }
 
     public Optional<JdbcSchema> newJdbcSchemaFromTableIfExists(JdbcOutputConnection connection,
-            TableIdentifier table) throws SQLException
+            TableIdentifier table, Map<String, JdbcColumnOption> options) throws SQLException
     {
         if (!connection.tableExists(table)) {
             // DatabaseMetaData.getPrimaryKeys fails if table does not exist
@@ -939,6 +946,7 @@ public abstract class AbstractJdbcOutputPlugin
         ImmutableSet<String> primaryKeys = primaryKeysBuilder.build();
 
         ImmutableList.Builder<JdbcColumn> builder = ImmutableList.builder();
+        ImmutableMap.Builder<String, JdbcColumnOption> options_builder = ImmutableMap.builder();
         rs = dbm.getColumns(
                 JdbcUtils.escapeSearchString(table.getDatabase(), escape),
                 JdbcUtils.escapeSearchString(table.getSchemaName(), escape),
@@ -960,6 +968,7 @@ public abstract class AbstractJdbcOutputPlugin
                 //rs.getString("COLUMN_DEF") // or null  // TODO
                 builder.add(JdbcColumn.newGenericTypeColumn(
                             columnName, sqlType, simpleTypeName, colSize, decDigit, charOctetLength, isNotNull, isUniqueKey));
+                options_builder.put(columnName, columnOptionOf(options, columnName));
                 // We can't get declared column name using JDBC API.
                 // Subclasses need to overwrite it.
             }
@@ -970,20 +979,24 @@ public abstract class AbstractJdbcOutputPlugin
         if (columns.isEmpty()) {
             return Optional.absent();
         } else {
-            return Optional.of(new JdbcSchema(columns));
+            return Optional.of(new JdbcSchema(columns, options_builder.build()));
         }
     }
 
-    private JdbcSchema matchSchemaByColumnNames(Schema inputSchema, JdbcSchema targetTableSchema)
+    private JdbcSchema matchSchemaByColumnNames(Schema inputSchema, JdbcSchema targetTableSchema, Map<String, JdbcColumnOption> options)
     {
         ImmutableList.Builder<JdbcColumn> jdbcColumns = ImmutableList.builder();
+        ImmutableMap.Builder<String, JdbcColumnOption> options_builder = ImmutableMap.builder();
 
         for (Column column : inputSchema.getColumns()) {
             Optional<JdbcColumn> c = targetTableSchema.findColumn(column.getName());
             jdbcColumns.add(c.or(JdbcColumn.skipColumn()));
+            if(c.isPresent()) {
+                options_builder.put(column.getName(), columnOptionOf(options, column.getName()));
+            }
         }
 
-        return new JdbcSchema(jdbcColumns.build());
+        return new JdbcSchema(jdbcColumns.build(), options_builder.build());
     }
 
     public TransactionalPageOutput open(TaskSource taskSource, Schema schema, final int taskIndex)
@@ -1011,7 +1024,7 @@ public abstract class AbstractJdbcOutputPlugin
                     newColumnSetterFactory(batch, task.getDefaultTimeZone()),
                     task.getTargetTableSchema(), schema,
                     task.getColumnOptions());
-            JdbcSchema insertIntoSchema = filterSkipColumns(task.getTargetTableSchema());
+            JdbcSchema insertIntoSchema = filterSkipColumns(task.getTargetTableSchema(), task.getColumnOptions());
             if (insertIntoSchema.getCount() == 0) {
                 throw new SQLException("No column to insert.");
             }

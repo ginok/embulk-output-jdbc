@@ -3,6 +3,7 @@ package org.embulk.output;
 import java.io.IOException;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.util.Map;
 import java.util.Properties;
 
 import org.embulk.config.Config;
@@ -19,6 +20,7 @@ import org.joda.time.DateTimeZone;
 
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 
 public class PostgreSQLOutputPlugin
@@ -139,9 +141,10 @@ public class PostgreSQLOutputPlugin
     // TODO This is almost copy from AbstractJdbcOutputPlugin excepting type of TIMESTAMP -> TIMESTAMP WITH TIME ZONE.
     //      AbstractJdbcOutputPlugin should have better extensibility.
     @Override
-    protected JdbcSchema newJdbcSchemaForNewTable(Schema schema)
+    protected JdbcSchema newJdbcSchemaForNewTable(Schema schema, final Map<String, JdbcColumnOption> options)
     {
         final ImmutableList.Builder<JdbcColumn> columns = ImmutableList.builder();
+        final ImmutableMap.Builder<String, JdbcColumnOption> options_builder = ImmutableMap.builder();
         for (Column c : schema.getColumns()) {
             final String columnName = c.getName();
             c.visit(new ColumnVisitor() {
@@ -150,6 +153,7 @@ public class PostgreSQLOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.BOOLEAN, "BOOLEAN",
                             1, 0, false, false));
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
 
                 public void longColumn(Column column)
@@ -157,6 +161,7 @@ public class PostgreSQLOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.BIGINT, "BIGINT",
                             22, 0, false, false));
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
 
                 public void doubleColumn(Column column)
@@ -164,6 +169,7 @@ public class PostgreSQLOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.FLOAT, "DOUBLE PRECISION",
                             24, 0, false, false));
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
 
                 public void stringColumn(Column column)
@@ -171,6 +177,7 @@ public class PostgreSQLOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.CLOB, "CLOB",
                             4000, 0, false, false));  // TODO size type param
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
 
                 public void jsonColumn(Column column)
@@ -178,6 +185,7 @@ public class PostgreSQLOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.OTHER, "JSON",
                             4000, 0, false, false));  // TODO size type param
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
 
                 public void timestampColumn(Column column)
@@ -185,10 +193,11 @@ public class PostgreSQLOutputPlugin
                     columns.add(JdbcColumn.newGenericTypeColumn(
                             columnName, Types.TIMESTAMP, "TIMESTAMP WITH TIME ZONE",
                             26, 0, false, false));  // size type param is from postgresql
+                    options_builder.put(columnName, columnOptionOf(options, columnName));
                 }
             });
         }
-        return new JdbcSchema(columns.build());
+        return new JdbcSchema(columns.build(), options_builder.build());
     }
 
     @Override

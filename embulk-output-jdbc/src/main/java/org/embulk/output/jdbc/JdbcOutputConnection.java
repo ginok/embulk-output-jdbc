@@ -333,8 +333,13 @@ public class JdbcOutputConnection
         sb.append(") VALUES (");
         for(int i=0; i < toTableSchema.getCount(); i++) {
             if(i != 0) { sb.append(", "); }
-            //sb.append("?");
-            sb.append("UUID_TO_BIN(?)");
+
+            Optional<JdbcColumnOption> columnOption = toTableSchema.findColumnOption(toTableSchema.getColumnName(i));
+            if(columnOption.isPresent()) {
+                sb.append(columnOption.get().getSql());
+            } else {
+                sb.append("?");
+            }
         }
         sb.append(")");
 
